@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>QC Site Selector</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/h3-js@4/dist/h3-js.umd.js"></script>
+<style>
+  :root {
+    --panel-bg: #ffffff;
+    --panel-border: #e2e5e9;
+    --text: #202124;
+    --text-muted: #5f6368;
+    --accent: #1a73e8;
+    --accent-hover: #1558b8;
+    --danger: #d93025;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: "Google Sans", Roboto, Arial, "Segoe UI", sans-serif;
+    color: var(--text); background: #fff;
+  }
+
+  #map { position: absolute; inset: 0; z-index: 0; background: #e9ebee; }
+
+  /* ---- shared floating panel look ---- */
+  .panel, .results-panel {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.15);
+    z-index: 1000;
+  }
+
+  /* ---- left: controls panel ---- */
+  .panel {
+    position: absolute; top: 12px; left: 12px;
+    width: 320px; max-height: calc(100vh - 24px);
+    overflow-y: auto; padding: 16px;
+  }
+  .panel h1 { font-size: 16px; margin: 0 0 2px; font-weight: 600; }
+  .panel .subtitle { font-size: 12px; color: var(--text-muted); margin: 0 0 14px; }
+
+  .field { margin-bottom: 14px; }
+  .field-label {
+    display: block; font-size: 12px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: .3px; margin-bottom: 6px;
+  }
+
+  input, select {
+    width: 100%; padding: 7px 9px; font-size: 13px;
+    border: 1px solid var(--panel-border); border-radius: 6px;
+    background: #fff; color: var(--text);
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+  .row-2 { display: flex; gap: 10px; }
+  .row-2 > div { flex: 1; }
+
+  /* ---- mode toggle ---- */
+  .mode-toggle { display: flex; gap: 0; border: 1px solid var(--panel-border); border-radius: 6px; overflow: hidden; }
+  .mode-toggle button {
+    flex: 1; padding: 7px 8px; font-size: 12.5px; font-weight: 500; cursor: pointer;
+    background: #fff; color: var(--text-muted); border: none; border-right: 1px solid var(--panel-border);
+  }
+  .mode-toggle button:last-child { border-right: none; }
+  .mode-toggle button.active { background: var(--accent); color: #fff; }
+
+  .pin-status {
+    font-size: 12px; padding: 6px 8px; border-radius: 6px;
+    background: #f1f3f4; color: var(--text-muted); margin-bottom: 8px; line-height: 1.4;
+  }
+  .pin-status.active { background: #e8f0fe; color: var(--accent); }
+
+  .btn {
+    display: inline-block; width: 100%; padding: 8px 10px; font-size: 13px;
+    font-weight: 500; border-radius: 6px; border: 1px solid var(--panel-border);
+    background: #f8f9fa; color: var(--text); cursor: pointer; text-align: center;
+  }
+  .btn:hover { background: #f1f3f4; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; margin-top: 6px; }
+  .btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.link {
+    width: auto; padding: 0; margin-top: 4px; background: none; border: none;
+    color: var(--text-muted); text-decoration: underline; font-size: 11px;
+  }
+  .btn.link:hover { background: none; color: var(--accent); }
+
+  .hint { font-size: 11px; color: var(--text-muted); line-height: 1.4; margin-top: 4px; }
+
+  #spinner { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+  #error { color: var(--danger); font-size: 12px; margin-top: 8px; white-space: pre-wrap; }
+
+  .legend { border-top: 1px solid var(--panel-border); padding-top: 12px; margin-top: 4px; }
+  .legend .legend-label {
+    font-size: 12px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: .3px; margin-bottom: 6px;
+  }
+  .legend .bar { height: 10px; border-radius: 4px; background: linear-gradient(to right, #cfd4dc, #1a73e8, #ff6b4f); }
+  .legend .labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  /* ---- right: results panel ---- */
+  .results-panel {
+    position: absolute; top: 12px; right: 12px;
+    width: 320px; max-height: calc(100vh - 24px);
+    overflow-y: auto; padding: 12px 14px;
+  }
+  .results-panel h2 {
+    font-size: 13px; margin: 0 0 8px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: .3px;
+  }
+  #narrative { font-size: 13px; line-height: 1.55; color: var(--text); white-space: pre-wrap; margin-bottom: 14px; }
+  .result-empty { font-size: 12px; color: var(--text-muted); padding: 8px 0; }
+
+  .notice {
+    font-size: 11.5px; line-height: 1.45; color: var(--text-muted);
+    background: #f1f3f4; border-radius: 6px; padding: 7px 9px; margin-bottom: 10px;
+  }
+
+  #rankedList { list-style: none; margin: 0; padding: 0; }
+  .result-item {
+    padding: 8px 6px; border-bottom: 1px solid #f1f3f4; cursor: pointer; font-size: 12.5px;
+  }
+  .result-item:hover { background: #f8f9fa; }
+  .result-item .r-title { font-weight: 600; display: flex; align-items: center; justify-content: space-between; }
+  .result-item .r-title .score { color: var(--accent); font-weight: 700; }
+  .result-item .r-meta { color: var(--text-muted); margin-top: 2px; }
+  .result-item.excluded { opacity: .55; }
+  .result-item.excluded .r-flag { color: var(--danger); font-size: 11px; margin-top: 2px; }
+
+  #breakdown { margin-top: 12px; border-top: 1px solid var(--panel-border); padding-top: 12px; display: none; }
+  #breakdown .bd-label { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+  #breakdown table { width: 100%; font-size: 11px; border-collapse: collapse; }
+  #breakdown th, #breakdown td { text-align: left; padding: 4px 2px; border-bottom: 1px solid #f1f3f4; }
+  #breakdown th { color: var(--text-muted); font-weight: 500; }
+  .conf-low { color: var(--danger); }
+  .w-neg { color: var(--danger); }
+
+  /* ---- bottom: stats bar ---- */
+  .stats-bar {
+    position: absolute; bottom: 12px; left: 12px; z-index: 1000;
+    background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 8px;
+    padding: 8px 12px; font-size: 12px; color: var(--text-muted);
+    box-shadow: 0 2px 10px rgba(0,0,0,.12);
+  }
+  .stats-bar b { color: var(--text); }
+
+  .leaflet-popup-content-wrapper { background: var(--panel-bg); color: var(--text); }
+  .leaflet-popup-content { font-size: 12.5px; }
+
+  @media (max-width: 900px) {
+    html, body { height: auto; }
+    #map { position: relative; height: 60vh; }
+    .panel, .results-panel, .stats-bar {
+      position: relative; top: auto; left: auto; right: auto; bottom: auto;
+      width: calc(100% - 24px); max-height: none; margin: 12px auto;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="panel">
+  <h1>QC Site Selector</h1>
+  <p class="subtitle" id="subtitle">Traditional retail site-selection, scored from demand &amp; supply signals.</p>
+
+  <div class="field">
+    <label class="field-label">Mode</label>
+    <div class="mode-toggle">
+      <button type="button" data-mode="retail" class="active">Traditional retail</button>
+      <button type="button" data-mode="dark_store">Dark store</button>
+    </div>
+    <div class="hint" id="modeHint">Walk-in store siting. Existing quick-commerce coverage is read as validated local demand.</div>
+  </div>
+
+  <div class="field">
+    <label class="field-label" for="city">City</label>
+    <input id="city" list="cityList" value="Gurugram" placeholder="e.g. Gurugram" />
+    <datalist id="cityList">
+      <option value="Gurugram"></option>
+      <option value="Mumbai"></option>
+      <option value="Delhi"></option>
+      <option value="Bengaluru"></option>
+      <option value="Pune"></option>
+      <option value="Hyderabad"></option>
+      <option value="Chennai"></option>
+      <option value="Kolkata"></option>
+      <option value="Ahmedabad"></option>
+      <option value="Jaipur"></option>
+      <option value="Lucknow"></option>
+      <option value="Chandigarh"></option>
+      <option value="Indore"></option>
+      <option value="Bhopal"></option>
+      <option value="Nagpur"></option>
+      <option value="Surat"></option>
+      <option value="Coimbatore"></option>
+      <option value="Kochi"></option>
+      <option value="Visakhapatnam"></option>
+      <option value="Patna"></option>
+      <option value="Bhubaneswar"></option>
+      <option value="Guwahati"></option>
+      <option value="Nashik"></option>
+    </datalist>
+    <div class="hint">Not seeing your city? Just type it &mdash; the scoring API covers more cities than this shortlist.</div>
+  </div>
+
+  <!-- Dark-store only: which platform is "us". Drives the cannibalization term. -->
+  <div class="field" id="platformField" style="display:none;">
+    <label class="field-label" for="platform">Siting for</label>
+    <select id="platform">
+      <option value="jiomart">JioMart</option>
+      <option value="blinkit">Blinkit</option>
+      <option value="zepto">Zepto</option>
+      <option value="others">Others / new entrant</option>
+    </select>
+    <div class="hint">
+      The selected platform&rsquo;s own footprint counts <b>against</b> a cell (cannibalization).
+      Every other platform counts <b>in favour</b> &mdash; their coverage is proof that
+      quick-commerce demand already exists there.
+      <br>Instamart isn&rsquo;t listed: we hold no serviceability crawl for it, so it has no
+      coverage data. It&rsquo;s a blind spot in the rival signal for every selection.
+    </div>
+  </div>
+
+  <div class="field">
+    <label class="field-label" for="category">Category</label>
+    <select id="category"></select>
+    <div class="hint" id="categoryHint"></div>
+  </div>
+
+  <div class="field">
+    <label class="field-label">Search area <span style="text-transform:none; font-weight:400;">(optional)</span></label>
+    <div class="pin-status" id="pinStatus">Click anywhere on the map to rank a neighborhood around it. Leave unset to rank the whole city.</div>
+    <input type="text" id="placeSearch" placeholder="Search a place or address, then press Enter" style="margin-bottom:6px;" />
+    <div class="hint" id="placeSearchHint"></div>
+    <button class="btn link" id="clearPick" type="button" style="display:none;">Clear picked point</button>
+  </div>
+
+  <div class="field row-2">
+    <div>
+      <label class="field-label" for="radius">Radius (km)</label>
+      <input id="radius" type="number" min="1" max="15" value="3" />
+    </div>
+    <div>
+      <label class="field-label" for="topN">Top N</label>
+      <input id="topN" type="number" min="1" max="20" value="5" />
+    </div>
+  </div>
+
+  <!-- Dark-store only: hide cells we already serve. -->
+  <div class="field" id="excludeField" style="display:none;">
+    <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text);">
+      <input type="checkbox" id="excludeSelfServed" checked style="width:auto;" />
+      Hide cells we already serve (&plusmn;1km buffer)
+    </label>
+    <div class="hint">Uncheck to see them greyed out in the ranking instead of removed.</div>
+  </div>
+
+  <div class="field">
+    <button class="btn primary" id="submit" type="button">Rank locations</button>
+    <div id="spinner" style="display:none;">Scoring grid + generating recommendation&hellip; (10&ndash;20s)</div>
+    <div id="error"></div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-label">Composite score</div>
+    <div class="bar"></div>
+    <div class="labels"><span>low</span><span>high</span></div>
+  </div>
+</div>
+
+<div class="results-panel" id="resultsPanel">
+  <h2>Recommendation</h2>
+  <div id="placeholder" class="result-empty">Run a query to see ranked cells and Gemini's write-up here.</div>
+  <div id="excludedNotice" class="notice" style="display:none;"></div>
+  <div id="narrative"></div>
+  <ul id="rankedList"></ul>
+  <div id="breakdown">
+    <div class="bd-label">Score breakdown for <span id="breakdownCell"></span></div>
+    <table>
+      <thead><tr><th>Feature</th><th>Raw</th><th>Weight</th><th>Conf.</th><th>Contrib.</th></tr></thead>
+      <tbody id="breakdownBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="stats-bar" id="statsBar">Pick a city &amp; category, then click <b>Rank locations</b>.</div>
+
+<script>
+const API_URL = "https://gvbsagii5k.execute-api.ap-south-1.amazonaws.com/default/qc-site-selector";
+
+// ---------- mode config ----------
+// Category lists differ by mode on purpose. A dark store is delivery-only, so
+// the retail categories (which differ mainly by browsing/try-on/mall behaviour)
+// don't apply -- quick-commerce siting is near-identical across categories.
+const MODES = {
+  retail: {
+    subtitle: 'Traditional retail site-selection, scored from demand &amp; supply signals.',
+    hint: 'Walk-in store siting. Existing quick-commerce coverage is read as validated local demand.',
+    categories: [
+      ['Footwear', 'Footwear'],
+      ['FMCG_Grocery', 'FMCG / Grocery'],
+      ['Other', 'Other (generic profile)']
+    ],
+    categoryHint: 'Category changes which signals matter — malls and footfall for Footwear, residential density for Grocery.'
+  },
+  dark_store: {
+    subtitle: 'Dark store siting &mdash; delivery-only, scored on rooftop density and rival coverage.',
+    hint: 'Delivery-only siting. Rival coverage counts in favour of a cell; our own network counts against it.',
+    categories: [
+      ['FMCG_Grocery', 'FMCG / Grocery (general QC)'],
+      ['Pharmacy', 'Pharmacy / OTC']
+    ],
+    categoryHint: 'Category matters far less here — a delivery format is sited on density and coverage, not on browsing behaviour.'
+  }
+};
+
+let currentMode = 'retail';
+
+const map = L.map('map', { zoomControl: true }).setView([28.4595, 77.0266], 12); // Gurugram default
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors', subdomains: 'abc', maxZoom: 19
+}).addTo(map);
+
+let hexLayer = L.layerGroup().addTo(map);
+let pickedLatLng = null;
+let pickedMarker = null;
+
+const cityCenters = {
+  gurugram: [28.4595, 77.0266], mumbai: [19.0760, 72.8777], delhi: [28.6139, 77.2090],
+  bengaluru: [12.9716, 77.5946], pune: [18.5204, 73.8567], hyderabad: [17.3850, 78.4867],
+  chennai: [13.0827, 80.2707], kolkata: [22.5726, 88.3639], ahmedabad: [23.0225, 72.5714]
+};
+let lastCityCenter = cityCenters.gurugram; // anchors place-search so results stay within the selected city
+
+// ---------- mode toggle ----------
+function applyMode(mode) {
+  currentMode = mode;
+  const cfg = MODES[mode];
+
+  document.querySelectorAll('.mode-toggle button').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  document.getElementById('subtitle').innerHTML = cfg.subtitle;
+  document.getElementById('modeHint').textContent = cfg.hint;
+  document.getElementById('categoryHint').textContent = cfg.categoryHint;
+
+  const isDark = mode === 'dark_store';
+  document.getElementById('platformField').style.display = isDark ? 'block' : 'none';
+  document.getElementById('excludeField').style.display = isDark ? 'block' : 'none';
+
+  // Rebuild the category dropdown, keeping the current pick if it's still valid.
+  const catEl = document.getElementById('category');
+  const prev = catEl.value;
+  catEl.innerHTML = cfg.categories
+    .map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
+  if (cfg.categories.some(([v]) => v === prev)) catEl.value = prev;
+
+  updateStatsBar();
+}
+
+document.querySelectorAll('.mode-toggle button').forEach(b => {
+  b.addEventListener('click', () => applyMode(b.dataset.mode));
+});
+
+document.getElementById('city').addEventListener('change', (e) => {
+  const key = e.target.value.trim().toLowerCase();
+  if (cityCenters[key]) {
+    lastCityCenter = cityCenters[key];
+    map.setView(lastCityCenter, 12);
+  } else if (key) {
+    // Not one of the shortlisted cities — geocode it so the map still pans there.
+    // The scoring API itself isn't limited to the shortlist; this is just the map preview.
+    fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=in&q=' + encodeURIComponent(key))
+      .then(r => r.json())
+      .then(results => {
+        if (results.length) {
+          lastCityCenter = [parseFloat(results[0].lat), parseFloat(results[0].lon)];
+          map.setView(lastCityCenter, 12);
+        }
+      })
+      .catch(() => {});
+  }
+  updateStatsBar();
+});
+document.getElementById('category').addEventListener('change', updateStatsBar);
+document.getElementById('platform').addEventListener('change', updateStatsBar);
+
+const pinStatusEl = document.getElementById('pinStatus');
+const defaultPinText = 'Click anywhere on the map to rank a neighborhood around it. Leave unset to rank the whole city.';
+
+function setPickedPoint(lat, lon, label) {
+  pickedLatLng = L.latLng(lat, lon);
+  pinStatusEl.textContent = label || `Picked: ${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+  pinStatusEl.classList.add('active');
+  document.getElementById('clearPick').style.display = 'inline';
+  if (pickedMarker) map.removeLayer(pickedMarker);
+  pickedMarker = L.circleMarker([lat, lon], { radius: 6, color: '#ff6b4f', fillColor: '#ff6b4f', fillOpacity: 1 }).addTo(map);
+  updateStatsBar();
+}
+
+map.on('click', (e) => setPickedPoint(e.latlng.lat, e.latlng.lng));
+
+document.getElementById('clearPick').addEventListener('click', () => {
+  pickedLatLng = null;
+  pinStatusEl.textContent = defaultPinText;
+  pinStatusEl.classList.remove('active');
+  document.getElementById('clearPick').style.display = 'none';
+  if (pickedMarker) { map.removeLayer(pickedMarker); pickedMarker = null; }
+  document.getElementById('placeSearch').value = '';
+  document.getElementById('placeSearchHint').textContent = '';
+  updateStatsBar();
+});
+
+// ---------- place search (Nominatim, free OSM geocoder — no API key needed) ----------
+const placeSearchEl = document.getElementById('placeSearch');
+const placeHintEl = document.getElementById('placeSearchHint');
+placeSearchEl.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const q = placeSearchEl.value.trim();
+  if (!q) return;
+  placeHintEl.textContent = 'Searching…';
+
+  // Bias + restrict the geocode to the selected city, so e.g. "Milan Nagar" while
+  // City=Dibrugarh doesn't resolve to a same-named place in a totally different city.
+  const city = document.getElementById('city').value.trim();
+  const fullQuery = city ? `${q}, ${city}` : q;
+  const [clat, clon] = lastCityCenter;
+  const delta = 0.5; // ~50-55km box around the selected city center
+  const viewbox = `${clon - delta},${clat + delta},${clon + delta},${clat - delta}`;
+
+  fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=in'
+      + '&viewbox=' + encodeURIComponent(viewbox) + '&bounded=1'
+      + '&q=' + encodeURIComponent(fullQuery))
+    .then(r => r.json())
+    .then(results => {
+      if (!results.length) {
+        placeHintEl.textContent = `No match found in ${city || 'the selected city'}. Try a more specific place name, or click the map directly.`;
+        return;
+      }
+      const { lat, lon, display_name } = results[0];
+      placeHintEl.textContent = 'Found: ' + display_name;
+      map.setView([parseFloat(lat), parseFloat(lon)], 13);
+      setPickedPoint(parseFloat(lat), parseFloat(lon));
+    })
+    .catch(() => {
+      placeHintEl.textContent = 'Search failed — click the map to set a location instead.';
+    });
+});
+
+function platformLabel() {
+  const sel = document.getElementById('platform');
+  return sel.options[sel.selectedIndex].text;
+}
+
+function updateStatsBar() {
+  if (document.getElementById('placeholder').style.display === 'none') return; // already showing results summary
+  const city = document.getElementById('city').value.trim() || 'Gurugram';
+  const category = document.getElementById('category').value;
+  const parts = [`<b>${currentMode === 'dark_store' ? 'Dark store' : 'Retail'}</b>`, `<b>${city}</b>`];
+  if (currentMode === 'dark_store') parts.push(`<b>${platformLabel()}</b>`);
+  parts.push(`<b>${category}</b>`);
+  parts.push(pickedLatLng ? '<b>point picked</b>' : '<b>whole city</b>');
+  document.getElementById('statsBar').innerHTML = parts.join(' &middot; ') + ' &mdash; click Rank locations.';
+}
+
+function scoreColor(score, min, max) {
+  const t = max > min ? (score - min) / (max - min) : 0.5;
+  // interpolate: light slate -> blue -> orange, matches the legend gradient
+  const stops = [[207,212,220],[26,115,232],[255,107,79]];
+  const seg = t < 0.5 ? [stops[0], stops[1], t*2] : [stops[1], stops[2], (t-0.5)*2];
+  const [c1, c2, f] = seg;
+  const r = Math.round(c1[0] + (c2[0]-c1[0])*f);
+  const g = Math.round(c1[1] + (c2[1]-c1[1])*f);
+  const b = Math.round(c1[2] + (c2[2]-c1[2])*f);
+  return `rgb(${r},${g},${b})`;
+}
+
+function renderBreakdown(cell) {
+  const bd = cell.score_breakdown || {};
+  const rows = Object.entries(bd)
+    .filter(([, v]) => v.weight !== 0)
+    .sort((a, b) => Math.abs(b[1].contribution) - Math.abs(a[1].contribution));
+  document.getElementById('breakdownCell').textContent = cell.h3_r8;
+  document.getElementById('breakdownBody').innerHTML = rows.map(([feat, v]) => `
+    <tr>
+      <td>${feat}</td>
+      <td>${v.raw === null || v.raw === undefined ? '&mdash;' : Number(v.raw).toFixed(2)}</td>
+      <td class="${v.weight < 0 ? 'w-neg' : ''}">${v.weight}</td>
+      <td class="${v.confidence < 0.6 ? 'conf-low' : ''}">${v.confidence.toFixed(2)}</td>
+      <td>${v.contribution}</td>
+    </tr>`).join('');
+  document.getElementById('breakdown').style.display = 'block';
+}
+
+function renderResults(data) {
+  document.getElementById('placeholder').style.display = 'none';
+  document.getElementById('narrative').textContent = data.narrative;
+
+  // Tell the user when cells were removed for cannibalization — otherwise a
+  // short result list looks like missing data rather than a deliberate filter.
+  const noticeEl = document.getElementById('excludedNotice');
+  if (data.mode === 'dark_store' && data.excluded_count > 0) {
+    const who = data.self_platform ? data.self_platform : 'the selected platform';
+    noticeEl.innerHTML = `<b>${data.excluded_count}</b> cell(s) hidden &mdash; ${who} already serves them or they fall inside the cannibalization buffer.`;
+    noticeEl.style.display = 'block';
+  } else {
+    noticeEl.style.display = 'none';
+  }
+
+  const ranked = data.top_ranked;
+  const scores = ranked.map(c => c.score);
+  const min = Math.min(...scores), max = Math.max(...scores);
+
+  hexLayer.clearLayers();
+  const list = document.getElementById('rankedList');
+  list.innerHTML = '';
+
+  ranked.forEach((cell, i) => {
+    const color = scoreColor(cell.score, min, max);
+    let boundary;
+    try {
+      boundary = h3.cellToBoundary(cell.h3_r8).map(([lat, lng]) => [lat, lng]);
+    } catch (e) { boundary = null; }
+
+    if (boundary) {
+      const poly = L.polygon(boundary, {
+        color: color, weight: 2, fillColor: color,
+        fillOpacity: cell.self_served ? 0.15 : 0.45,
+        dashArray: cell.self_served ? '4,4' : null
+      }).addTo(hexLayer);
+      poly.bindPopup(
+        `<b>#${i+1} &middot; score ${cell.score}</b><br>${cell.lat.toFixed(4)}, ${cell.lon.toFixed(4)}`
+        + (cell.exclusion_reason ? `<br><i>${cell.exclusion_reason}</i>` : '')
+      );
+      poly.on('click', () => renderBreakdown(cell));
+    }
+
+    const li = document.createElement('li');
+    li.className = 'result-item' + (cell.self_served ? ' excluded' : '');
+    li.innerHTML = `
+      <div class="r-title"><span>#${i+1} &middot; ${cell.h3_r8}</span><span class="score">${cell.score}</span></div>
+      <div class="r-meta">${cell.lat.toFixed(4)}, ${cell.lon.toFixed(4)}</div>`
+      + (cell.exclusion_reason ? `<div class="r-flag">${cell.exclusion_reason}</div>` : '');
+    li.addEventListener('click', () => {
+      map.panTo([cell.lat, cell.lon]);
+      renderBreakdown(cell);
+    });
+    list.appendChild(li);
+  });
+
+  if (ranked.length) {
+    const bounds = L.latLngBounds(ranked.map(c => [c.lat, c.lon]));
+    map.fitBounds(bounds, { padding: [40, 40] });
+    renderBreakdown(ranked[0]);
+  }
+
+  const city = document.getElementById('city').value.trim() || 'Gurugram';
+  const bits = [`<b>${ranked.length}</b> cells ranked`, `<b>${city}</b>`];
+  if (data.mode === 'dark_store') bits.push(`<b>${data.self_platform || 'new entrant'}</b>`);
+  bits.push(`<b>${data.category}</b>`);
+  document.getElementById('statsBar').innerHTML = bits.join(' &middot; ');
+}
+
+document.getElementById('submit').addEventListener('click', async () => {
+  const city = document.getElementById('city').value.trim() || 'Gurugram';
+  const category = document.getElementById('category').value;
+  const radius_km = Number(document.getElementById('radius').value) || 3;
+  const top_n = Number(document.getElementById('topN').value) || 5;
+
+  const body = { city, category, radius_km, top_n, mode: currentMode };
+  if (currentMode === 'dark_store') {
+    body.self_platform = document.getElementById('platform').value;
+    body.exclude_self_served = document.getElementById('excludeSelfServed').checked;
+  }
+  if (pickedLatLng) { body.lat = pickedLatLng.lat; body.lon = pickedLatLng.lng; }
+
+  const btn = document.getElementById('submit');
+  const spinner = document.getElementById('spinner');
+  const errorEl = document.getElementById('error');
+  btn.disabled = true; spinner.style.display = 'block'; errorEl.textContent = '';
+
+  try {
+    const resp = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    renderResults(data);
+  } catch (err) {
+    errorEl.textContent = `Request failed: ${err.message}`;
+  } finally {
+    btn.disabled = false; spinner.style.display = 'none';
+  }
+});
+
+applyMode('retail');
+</script>
+</body>
+</html>
